@@ -15,18 +15,18 @@ async function getConfig() {
   return json;
 }
 
-async function webRTC(streamName = null, elementName = null) {
+async function webRTC(suuid = null, elementName = null) {
   if (!config) config = await getConfig();
-  const suuid = streamName || config.client.defaultStream;
+  log('stream:', suuid, 'element:', elementName)
   log('client starting');
-  log(`server: http://${location.hostname}${config.server.encoderPort} stream: ${suuid}`);
+  log(`server: http://${config.streamServer}${config.server.encoderPort} stream: ${suuid}`);
   const stream = new MediaStream();
   const connection = new RTCPeerConnection();
   connection.oniceconnectionstatechange = () => log('connection', connection.iceConnectionState);
   connection.onnegotiationneeded = async () => {
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
-    const res = await fetch(`http://${location.hostname}${config.server.encoderPort}/stream/receiver/${suuid}`, {
+    const res = await fetch(`http://${config.streamServer}${config.server.encoderPort}/stream/receiver/${suuid}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
       body: new URLSearchParams({
@@ -36,7 +36,7 @@ async function webRTC(streamName = null, elementName = null) {
     });
     const data = (res && res.ok) ? await res.text() : '';
     if (data.length === 0) {
-      log('cannot connect:', `http://${location.hostname}${config.server.encoderPort}`);
+      log('cannot connect:', `http://${config.streamServer}${config.server.encoderPort}`);
     } else {
       connection.setRemoteDescription(new RTCSessionDescription({
         type: 'answer',
@@ -55,7 +55,7 @@ async function webRTC(streamName = null, elementName = null) {
     log('received track:', event.track, event.track.getSettings());
   };
 
-  const res = await fetch(`http://${location.hostname}${config.server.encoderPort}/stream/codec/${suuid}`);
+  const res = await fetch(`http://${config.streamServer}${config.server.encoderPort}/stream/codec/${suuid}`);
   let streams = [];
   try {
     streams = res && res.ok ? await res.json() : [];
@@ -79,4 +79,28 @@ async function webRTC(streamName = null, elementName = null) {
   };
 }
 
-window.onload = () => webRTC('reowhite', 'videoElem');
+async function main() {
+    config = await getConfig();
+    const videos = document.getElementById('videos')
+    let count = 0;
+    for (stream in config.streams) {
+      count++;
+      const videoId = 'video-' + stream;
+      const videoElem = document.createElement('video');
+      videoElem.setAttribute('id', videoId);
+      videoElem.setAttribute('width', '50%');
+      videoElem.setAttribute('autoplay', "")
+      videoElem.setAttribute('controls', "")
+      videos.appendChild(videoElem);
+      webRTC(stream, videoId);
+    }
+}
+
+window.onload = () => main();
+
+window.setTimeout( function() {
+  Object.values(document.getElementsByTagName("video")).forEach((video) => {
+    video.play();
+  })
+}, 5000);
+
