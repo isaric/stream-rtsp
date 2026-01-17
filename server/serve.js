@@ -3,8 +3,11 @@ const fs = require('fs');
 const http = require('http');
 const http2 = require('http2');
 const path = require('path');
+const url = require('url');
 const log = require('@vladmandic/pilogger');
 const config = require('../config.json');
+const db = require('./db');
+const { parseCookies, verifyToken, signToken, setAuthCookie, clearAuthCookie } = require('./auth');
 
 // app configuration
 // you can provide your server key and certificate or use provided self-signed ones
@@ -80,6 +83,39 @@ function handle(uri) {
 
 // process http requests
 async function httpRequest(req, res) {
+  const parsed = url.parse(req.url, true);
+  const pathname = parsed.pathname || '/';
+  const cookies = parseCookies(req);
+  const token = cookies.auth;
+  const user = token ? verifyToken(token) : null;
+
+  // API: login
+  if (req.method === 'POST' && pathname === '/api/login') return handleLogin(req, res);
+  if (req.method === 'POST' && pathname === '/api/logout') {
+    clearAuthCookie(res);
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: true }));
+    return undefined;
+  }
+  // Dynamic config.json from DB
+  if (req.method === 'GET' && pathname === '/config.json') return handleDynamicConfig(req, res);
+  // Proxy to stream server, protected
+  if (pathname.startsWith('/stream/')) return proxyToStream(req, res, user);
+
+  // Block access to app pages if not authenticated, allow login page and assets
+  const isHTML = pathname === '/' || pathname.endsWith('.html') || pathname === '';
+  const isLoginPage = pathname === '/login.html';
+  if (!user && isHTML && !isLoginPage) {
+    // serve login.html
+    const loginFile = path.join(process.cwd(), options.defaultFolder, 'login.html');
+    if (fs.existsSync(loginFile)) {
+      const data = fs.readFileSync(loginFile);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+      res.end(data);
+      return undefined;
+    }
+  }
+
   handle(decodeURI(req.url)).then((result) => {
     // get original ip of requestor, regardless if it's behind proxy or not
     const forwarded = (req.headers['forwarded'] || '').match(/for="\[(.*)\]:/);
@@ -142,10 +178,95 @@ async function startStreamServer() {
   streamServer.on('close', (data) => log.data('stream closed:', data?.toString()));
 }
 
+// --- helpers & api ---
+async function handleLogin(req, res) {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk; });
+  req.on('end', async () => {
+    try {
+      const params = new url.URLSearchParams(body);
+      const username = params.get('username') || '';
+      const password = params.get('password') || '';
+      const record = await db.getUserByUsername(username);
+      if (!record) return sendJSON(res, 401, { ok: false, error: 'invalid credentials' });
+      const ok = await require('./auth').checkPassword(password, record.password_hash);
+      if (!ok) return sendJSON(res, 401, { ok: false, error: 'invalid credentials' });
+      const token = signToken({ uid: record.id, username: record.username });
+      setAuthCookie(res, token, !!options.httpsPort);
+      return sendJSON(res, 200, { ok: true });
+    } catch (e) {
+      return sendJSON(res, 500, { ok: false, error: e?.message || 'error' });
+    }
+  });
+}
+
+async function handleDynamicConfig(req, res) {
+  try {
+    const serverCfg = await db.getServerConfig();
+    const streams = await db.getStreamsMap();
+    const json = {
+      streamServer: '',
+      server: {
+        httpPort: serverCfg?.http_port || options.httpPort,
+        httpsPort: serverCfg?.https_port || options.httpsPort,
+        encoderPort: serverCfg?.encoder_port || config.server.encoderPort,
+        encoderBase: '', // same-origin proxy
+        iceServers: serverCfg?.ice_servers || config.server.iceServers,
+        webrtcMinPort: serverCfg?.webrtc_min_port || config.server.webrtcMinPort,
+        webrtcMaxPort: serverCfg?.webrtc_max_port || config.server.webrtcMaxPort,
+        retryConnectSec: serverCfg?.retry_connect_sec || config.server.retryConnectSec,
+        startStreamServer: !!serverCfg?.start_stream_server,
+      },
+      streams,
+      client: config.client || { debug: true },
+    };
+    sendJSON(res, 200, json);
+  } catch (e) {
+    sendJSON(res, 500, { ok: false, error: e?.message || 'error' });
+  }
+}
+
+function sendJSON(res, status, obj) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+  res.end(JSON.stringify(obj));
+}
+
+async function proxyToStream(req, res, user) {
+  if (!user) {
+    sendJSON(res, 401, { ok: false, error: 'unauthorized' });
+    return;
+  }
+  let targetPort = 8002;
+  try {
+    const serverCfg = await db.getServerConfig();
+    const enc = serverCfg?.encoder_port || config.server.encoderPort || ':8002';
+    targetPort = parseInt(String(enc).replace(':', ''), 10);
+  } catch { /* ignore and use default */ }
+  const opts = url.parse(`http://127.0.0.1:${targetPort}${req.url}`);
+  opts.method = req.method;
+  opts.headers = { ...req.headers };
+  // remove hop-by-hop headers
+  delete opts.headers.host; delete opts.headers.connection; delete opts.headers['content-length'];
+  const proxied = http.request(opts, (pres) => {
+    res.writeHead(pres.statusCode || 502, pres.headers);
+    pres.pipe(res);
+  });
+  proxied.on('error', (err) => {
+    sendJSON(res, 502, { ok: false, error: err?.message || 'proxy error' });
+  });
+  req.pipe(proxied);
+}
+
 // app main entry point
 async function main() {
   log.header();
   process.chdir(path.join(__dirname, '..'));
+  try {
+    await db.init();
+    log.state('db initialized');
+  } catch (e) {
+    log.error('db init failed:', e?.message || e);
+  }
   if (options.httpPort && options.httpPort > 0) {
     // @ts-ignore // ignore invalid options
     const server1 = http.createServer(options, httpRequest);
