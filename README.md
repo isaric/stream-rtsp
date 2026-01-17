@@ -258,3 +258,34 @@ ffmpeg -hide_banner -loglevel fatal \
 - Add embedded `ffmpeg` execution to `serve.js`
 - Investigate `ffmpeg` as `wasm`: <https://github.com/Kagami/ffmpeg.js>
 - Investigate `rtmp` using `media-stream-library-js` or `video.js` or `hls.js`
+
+<br><hr>
+
+## Authentication and Postgres-backed configuration (added)
+
+- A simple authentication layer was added to the Node.js server component.
+  - Navigate to the root URL and you will be redirected to a login page (`/login.html`) if not authenticated.
+  - Default credentials for development: admin / admin (seeded into Postgres on first start). Change using env vars DEFAULT_ADMIN_USERNAME and DEFAULT_ADMIN_PASSWORD before first start.
+  - After login, a secure httpOnly cookie is issued and required to access the app and to reach the streaming endpoints.
+
+- Configuration is now stored in Postgres with three tables: users, server_config, streams. The Node server exposes a dynamic `/config.json` generated from DB.
+  - The server proxies all `/stream/*` requests to the Go stream server on the same host, enforcing authentication.
+  - The client has been updated to use same-origin for `/stream/*` requests via a new `server.encoderBase` value.
+
+### Run Postgres for development
+
+- A Docker Compose file is provided to start Postgres locally:
+
+```
+docker compose up -d db
+```
+
+Postgres connection defaults used by the server (override with standard PG* env vars or DATABASE_URL):
+
+- host: localhost
+- port: 5432
+- user: stream
+- password: stream
+- database: stream
+
+On first server start, tables are created and the default admin user is seeded. Existing `config.json` values are imported into the DB if present.

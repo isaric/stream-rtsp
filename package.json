@@ -37,6 +37,10 @@
     "hint": "^6.2.0"
   },
   "dependencies": {
-    "@vladmandic/pilogger": "^0.4.4"
+    "@vladmandic/pilogger": "^0.4.4",
+    "bcryptjs": "^2.4.3",
+    "cookie": "^0.6.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.5"
   }
 }

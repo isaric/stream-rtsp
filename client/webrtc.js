@@ -19,14 +19,15 @@ async function webRTC(suuid = null, elementName = null) {
   if (!config) config = await getConfig();
   log('stream:', suuid, 'element:', elementName)
   log('client starting');
-  log(`server: http://${config.streamServer}${config.server.encoderPort} stream: ${suuid}`);
+  const encoderBase = (config?.server?.encoderBase !== undefined) ? (config.server.encoderBase || '') : `http://${config.streamServer}${config.server.encoderPort}`;
+  log(`server: ${encoderBase || '(same-origin)'} stream: ${suuid}`);
   const stream = new MediaStream();
   const connection = new RTCPeerConnection();
   connection.oniceconnectionstatechange = () => log('connection', connection.iceConnectionState);
   connection.onnegotiationneeded = async () => {
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
-    const res = await fetch(`http://${config.streamServer}${config.server.encoderPort}/stream/receiver/${suuid}`, {
+    const res = await fetch(`${encoderBase}/stream/receiver/${suuid}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
       body: new URLSearchParams({
@@ -36,7 +37,7 @@ async function webRTC(suuid = null, elementName = null) {
     });
     const data = (res && res.ok) ? await res.text() : '';
     if (data.length === 0) {
-      log('cannot connect:', `http://${config.streamServer}${config.server.encoderPort}`);
+      log('cannot connect:', encoderBase || '(same-origin)');
     } else {
       connection.setRemoteDescription(new RTCSessionDescription({
         type: 'answer',
@@ -55,7 +56,7 @@ async function webRTC(suuid = null, elementName = null) {
     log('received track:', event.track, event.track.getSettings());
   };
 
-  const res = await fetch(`http://${config.streamServer}${config.server.encoderPort}/stream/codec/${suuid}`);
+  const res = await fetch(`${encoderBase}/stream/codec/${suuid}`);
   let streams = [];
   try {
     streams = res && res.ok ? await res.json() : [];

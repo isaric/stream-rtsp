@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login</title>
+    <style>
+      body { font-family: Arial, sans-serif; background:#0b0c10; color:#c5c6c7; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+      .card { background:#1f2833; padding:24px; border-radius:8px; width:320px; box-shadow:0 2px 8px rgba(0,0,0,.4); }
+      h1 { font-size:18px; margin:0 0 16px; color:#66fcf1; }
+      label { display:block; font-size:13px; margin:8px 0 4px; }
+      input { width:100%; padding:10px; border-radius:4px; border:1px solid #45a29e; background:#0b0c10; color:#c5c6c7; }
+      button { margin-top:16px; width:100%; padding:10px; border:none; border-radius:4px; background:#45a29e; color:#0b0c10; cursor:pointer; font-weight:700; }
+      .error { color:#ff8080; min-height:18px; margin-top:8px; font-size:12px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Sign in</h1>
+      <form id="loginForm">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <button type="submit">Login</button>
+        <div class="error" id="err"></div>
+      </form>
+    </div>
+    <script>
+      const form = document.getElementById('loginForm');
+      const err = document.getElementById('err');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        err.textContent = '';
+        const data = new URLSearchParams(new FormData(form));
+        const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: data });
+        if (res.ok) {
+          window.location.href = '/';
+        } else {
+          try { const j = await res.json(); err.textContent = j.error || 'Login failed'; } catch { err.textContent = 'Login failed'; }
+        }
+      });
+    </script>
+  </body>
+  </html>
